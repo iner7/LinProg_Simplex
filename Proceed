@@ -1,0 +1,596 @@
+#!/usr/bin/env python3
+
+DEF_FMT = "%.4f"
+
+def ParseExp(exp):
+    exp = exp.replace(" ", "")
+    ex = []
+    mode = 'k'
+    tmp1 = ''
+    tmp2 = ''
+    for un, c in enumerate(exp):
+        if c in 'qwertyuiopasdfghjklzxcvbnm': # это переменная
+            mode = 'v'
+            tmp1 = c
+
+            continue
+        elif c in "+-":
+            if mode == 'v':
+                if tmp2 == "": tmp2 = '1'
+                if tmp2 == "-": tmp2 = '-1'
+                ex.append([tmp2, tmp1])
+                tmp1 = ''
+                tmp2 = '1'
+            if mode == 'k' and un != 0:
+                tmp1 = ""
+                if tmp2 == "": tmp2 = '1'
+                if tmp2 == "-": tmp2 = '-1'
+                ex.append([tmp2, tmp1])
+                tmp1 = ''
+                tmp2 = '1'
+            mode = 'k'
+            if c != '+':
+                tmp2 = c
+            else:
+                tmp2 = ''
+            continue
+        elif c in "1234567890":
+            if mode == 'k':
+                tmp2 += c
+            elif mode == 'v':
+                tmp1 += c
+            continue
+    if (tmp1 != '') or (tmp2 != ''):
+        if tmp2 == "": tmp2 = '1'
+        if tmp2 == "-": tmp2 = '-1'
+        ex.append([tmp2, tmp1])
+    for i, e in enumerate(ex):
+        ex[i][0] = float(e[0])
+    return ex
+def SubsFx(exp, vr, vl):
+    tmp = []+exp
+    for i, e in enumerate(tmp):
+        if e[1] == vr:
+            tmp[i][1] = vl
+    return tmp
+def Expand(exp, k=1):
+    tmp = []
+    for i, e in enumerate(exp):
+        km = e[0]
+        if type(e[1]) is list:
+            for ex in Expand(e[1], km):
+                tmp.append(ex)
+        else:
+            tmp.append([ km*k, e[1] ])
+    return tmp
+def PrintExp(exp, printNull=False):
+    tmp = ""
+    for e in exp:
+        if printNull or (e[0] != 0):
+            if e[0] == 1.0:
+                if tmp != "": tmp += "+"
+            elif e[0] == -1.0: tmp += "-"
+            else:
+                if e[0] >= 0 and tmp != "":
+                    tmp += "+"+DEF_FMT%(e[0])
+                else:
+                    tmp += DEF_FMT%(e[0])
+            if type(e[1]) is list:
+                tmp += "("+PrintExp(e[1], printNull)+")"
+            else:
+                tmp += str(e[1])
+    tmp = tmp.replace('+', ' + ')
+    tmp = tmp.replace('-', ' - ')
+    tmp = tmp.replace('(', ' ( ')
+    tmp = tmp.replace(')', ' ) ')
+    if tmp.startswith(' - '):
+        tmp = "- "+tmp[3:]
+    if tmp.startswith(' ( '):
+        tmp = "( "+tmp[3:]
+    return tmp
+def SimplifyByOne(exp, per):
+    tmp = [ 0.0 , per ]
+    for e in exp:
+        if e[1] == per:
+            tmp[0] += e[0]
+    return tmp
+def Simplify(exp):
+    pers = []
+    tmp = []
+    for e in exp:
+        if not (e[1] in pers):
+            pers.append(e[1])
+    pers = sorted(pers)
+    for p in pers:
+        tmp.append(SimplifyByOne(exp, p))
+    return tmp
+def PrintUr(uxp, printNull=False):
+    return PrintExp(uxp[0], printNull) + " = " + PrintExp(uxp[1], printNull)
+def GetVar(uxp, per):
+    tmp = []+uxp[0]
+    for e in uxp[1]:
+        tmp.append([ -e[0] , e[1] ])
+    tmp = Simplify(tmp)
+    tux = []
+    for i, e in enumerate(tmp):
+        if e[1] == per:
+            tux.append([ -e[0] , e[1] ])
+            tmp.remove(e)
+    k = tux[0][0]
+    tux = Expand(tux, 1/k)
+    tmp = Expand(tmp, 1/k)
+    return [tux, tmp]
+def GetK(exp, per):
+    tmp = Simplify([]+exp)
+    for e in exp:
+        if e[1] == per:
+            return e[0]
+    return 0.0
+def CalculateExp(exp):
+    tmp = 0
+    for e in exp:
+        if e[1] != "":
+            tmp += float(e[0]) * float(e[1])
+        else:
+            tmp += float(e[0])
+    return tmp
+def GetDiffVar(l1, l2):
+    for i, e1 in enumerate(l1):
+        if (e1 != l2[i]):
+            return l2[i]
+    return None
+# ================================================================================================================================================
+# ================================================================================================================================================
+
+# Переменные, используемые в программе
+Exps = []       # все уравнения
+Osn   = []      # основные переменные
+Neosn = []      # неосновные переменные
+OsnOld = []     # основные устаревшие переменные
+NeosnOld = []   # неосновные устаревшие переменные
+Basis = []      # базис
+VBR = []        # вырожденные элементы базиса
+FessStart = []  # начальное значение уравнений
+Fess = []       # текущие уравнения (по индексам всех переменных)
+FessOld = []    # старые уравнения (по индексам всех переменных)
+PreResp_Basis = []      # все базисные решения
+PreResp_Value = 0.0     # значение целевой функции
+IsFoundEnd = False      # конец отрезка решений найден?
+
+# ================================================================================================================================================
+# ==== Считывание входных данных
+Fc = str(input())
+Fc = Fc.replace(" ", "")
+Fc = Fc.split("=")
+Fc[1] = ParseExp(Fc[1])
+Ft = str(input())
+tmp = input()
+while tmp != ".":
+    tmp = input()
+    if tmp == ".":
+        break
+    tmp = tmp.replace(" ", "")
+    znak = ''
+    if tmp.find('>=') != -1: znak = '>='
+    elif tmp.find('<=') != -1: znak = '<='
+    elif tmp.find('>') != -1: znak = '>'
+    elif tmp.find('<') != -1: znak = '<'
+    Osn.append(znak)
+    Basis.append(0.0)
+    VBR.append(False)
+    FessStart.append([])
+    Exps.append([ ParseExp(tmp.split(znak)[0]) , ParseExp(tmp.split(znak)[1]) ])
+
+# Начало решения
+print("[ ПОДГОТОВКА ] Замена неравенств на равенства и введение новых переменных")
+for p in Fc[1]:
+    Neosn.append(p[1])
+    Basis.append(0.0)
+    VBR.append(False)
+    FessStart.append([])
+for i, e in enumerate(Osn):
+    if e.find('<') != -1: Osn[i] = 'x' + str(len(Neosn) + i + 1)
+    elif e.find('>') != -1: Osn[i] = '-x' + str(len(Neosn) + i + 1)
+for i, e in enumerate(Exps):
+    if Osn[i].find('-') != -1: Exps[i][0].append([ -1.0 , Osn[i].replace('-','') ])
+    else: Exps[i][0].append([ 1.0 , Osn[i] ])
+    Osn[i] = Osn[i].replace('-','')
+for e in Exps:
+    print(PrintUr(e))
+
+print()
+print("     Основные переменные:  ", Osn)
+print("     Неосновные переменные:", Neosn)
+
+# ================================================================================================================================================
+# ==== Решение по шагам
+STEP = 1
+while True:
+    print()
+    print()
+    print(":::  " + str(STEP) + " ШАГ  : : : : : : : : : : : : : : : : : : : : : : : : : : : :")
+    print("     Основные переменные:  ", Osn)
+    print("     Неосновные переменные:", Neosn)
+    print()
+    FessOld = []+Fess
+    Fess = []+FessStart
+    # Выражаем основные переменные через неосновные
+    if len(FessOld) == 0:
+        for i, e in enumerate(Exps):
+            Exps[i] = GetVar(Exps[i], Osn[i])
+            index = int(Exps[i][0][0][1][1:])
+            Fess[index-1] = Exps[i][1]
+        # Выводим полученное
+        for e in Exps: print("     { " + PrintUr(e))
+    else:
+        for i, e in enumerate(Exps):
+            Exps[i] = GetVar(Exps[i], Osn[i])
+            index = int(Exps[i][0][0][1][1:])
+            Fess[index-1] = Exps[i][1]
+        # Выводим полученное
+        for e in Exps: print("     { " + PrintUr(e))
+        # Теперь над отыскать ту переменную, на которую шла замена
+        ve = int(GetDiffVar(OsnOld, Osn)[1:])
+        df = Fess[ve-1]
+        print()
+        for e in Exps:
+            SubsFx(e[1], "x"+str(ve), df)
+        for e in Exps: print("     { " + PrintUr(e))
+        print()
+        for e in Exps:
+            e[1] = Expand(e[1])
+        for e in Exps: print("     { " + PrintUr(e))
+        print()
+        for e in Exps:
+            e[1] = Simplify(e[1])
+        for e in Exps: print("     { " + PrintUr(e))
+        
+        for i, e in enumerate(Exps):
+            index = int(Exps[i][0][0][1][1:])
+            Fess[index-1] = Exps[i][1]
+    # Составляем базисное решение
+    for i, e in enumerate(Basis):
+        Basis[i] = 0.0
+        VBR[i] = False
+    for e in Exps:
+        index = int(e[0][0][1][1:])
+        value = GetK(e[1], "")
+        for e in e[1]:
+            if e == [0.0,'']:
+                VBR[index-1] = True
+        Basis[index-1] = value
+    # Выводим базисное решение
+    print()
+    print("     X"+str(STEP) + ' =', Basis)
+    ndbr_vr = []
+    ndbr_vl = []
+    # Проверяем на допустимость. Все компоненты должны быть положительные
+    for i, e in enumerate(Basis):
+        if e < 0:
+            # нашли отрицательную компоненту. Придётся её добавить
+            ndbr_vr.append("x"+str(i+1))
+            ndbr_vl.append(abs(e))
+    if len(ndbr_vl) != 0:
+        print("     Это недопустимое базисное решение.")
+        # Ищем, какую переменную поставим на замену
+        v1 = ""
+        v2 = ""
+        # избирается максимальное по модулю
+        vm = -1
+        im = 0
+        for i, e in enumerate(ndbr_vl):
+            if e > vm:
+                vm = e
+                im = i
+        v1 = ndbr_vr[im]
+        print("        По модулю коэффициента побеждает " + v1 + ". Его и ставим на замену.")
+        index = int(v1[1:])
+        print("        Выбираем переменную из правой части выражения "+v1+" = "+PrintExp(Fess[index-1]))
+        rrr = []+Fess[index-1]
+        pvr = []
+        pvl = []
+        # вычленяем все переменные со знаком + из правой части
+        for e in rrr:
+            if not (e[1] in pvr) and (e[0] > 0) and (e[1] != ""):
+                pvr.append(e[1])
+                pvl.append(e[0])
+        print(pvr)
+        print(pvl)
+        # пробуем найти для удобства вычислений переменную с единичным коэффициентом (чтобы было удобнее и красивее)
+        for i, e in enumerate(pvr):
+            if pvl[i] == 1.0:
+                v2 = e
+                break
+        # пробуем найти для удобства вычислений переменную с - 1 коэффициентом (чтобы было удобнее и красивее) (ну если единицу не нашли)
+        if v2 == "":
+            for i, e in enumerate(pvr):
+                if pvl[i] == -1.0:
+                    v2 = e
+                    break
+        # если и на этот раз ничего не нашли: придётся выбрать первую из них (а так можно любую)
+        if v2 == "":
+            v2 = pvr[0]
+        print("     Меняем переменные " + v1 + " и " + v2)
+        print("        осн. переменные до   = ", end="")
+        print(Osn)
+        print("        неосн. переменные до = ", end="")
+        print(Neosn)
+        OsnOld = []+Osn
+        NeosnOld = []+Neosn
+        for i, e in enumerate(Osn):
+            if e == v2:
+                Osn[i] = v1
+                break
+            elif e == v1:
+                Osn[i] = v2
+                break
+        for i, e in enumerate(Neosn):
+            if e == v2:
+                Neosn[i] = v1
+                break
+            elif e == v1:
+                Neosn[i] = v2
+                break
+        print("        осн. переменные после   = ", end="")
+        print(Osn)
+        print("        неосн. переменные после = ", end="")
+        print(Neosn)
+        STEP += 1
+        continue
+        #break
+    IsVBR = False
+    for e in VBR:
+        if e == True:
+            IsVBR = True
+            break
+    if IsVBR:
+        print("     Это вырожденное базисное решение.",VBR)
+        print("     [ ПРЕДУПРЕЖДЕНИЕ ] Возможно зацикливание задачи!!!")
+    else:
+        print("     Это допустимое базисное решение.")
+    # РЕШЕНИЕ ДОПУСТИМОЕ
+    # Подстановка значений в целевую функцию
+    Fctr = []
+    for e in Fc[1]: Fctr.append([ e[0], e[1] ])
+    print("     F(X"+str(STEP)+") = ", end="")
+    for i, e in enumerate(Neosn):
+        Fctr = SubsFx(Fctr, "x"+str(i+1), Basis[i])
+    print(Fctr, end="")
+    Fctx = CalculateExp(Fctr)
+    print(" = "+str(Fctx))
+    PreResp_Value = Fctx
+    # !!!!!!!!!! Проверка критерия оптимальности
+    Fctr = []
+    for e in Fc[1]: Fctr.append([ e[0], e[1] ])
+    for i, e in enumerate(Fess):
+        if e != []:
+            Fctr = SubsFx(Fctr, "x"+str(i+1), e)
+    # 1. Подстановка
+    print()
+    print("     F"+str(STEP)+" = ", end="")
+    print(PrintExp(Fctr), end="")
+    # 2. Раскрытие скобок
+    Fctr2 = []
+    for e in Fctr: Fctr2.append([ e[0], e[1] ])
+    Fctr2 = Expand(Fctr)
+    print(" =")
+    print("     = "+PrintExp(Fctr2), end="")
+    # 3. Приведение подобных
+    Fctr3 = []
+    for e in Fctr2: Fctr3.append([ e[0], e[1] ])
+    Fctr3 = Simplify(Fctr2)
+    print(" =")
+    print("     = "+PrintExp(Fctr3), end="")
+    print()
+    print()
+    # Анализ коэффициентов
+    kvr = []
+    kvl = []
+    kac = []
+    svr = []
+    svl = []
+    Optimum = True
+    for e in Fctr3:
+        if e[1] != "":
+            kvr.append(e[1])
+            kvl.append(e[0])
+            kac.append(True)
+    for i, k in enumerate(kac):
+        print("     коэффициент при " + kvr[i] + " = " + str(kvl[i]), end="")
+        if Ft == "max":
+            if kvl[i] > 0: # не [меньше нуля]
+                kac[i] = False
+                svr.append(kvr[i])
+                svl.append(abs(kvl[i]))  # !!!
+                Optimum = False
+        elif Ft == "min":
+            if kvl[i] < 0: # не [больше нуля]
+                kac[i] = False
+                svr.append(kvr[i])
+                svl.append(abs(kvl[i]))  # !!!
+                Optimum = False
+        if kac[i]:
+            print("\t\tподходит")
+        else:
+            print("\t\tне подходит")
+    print()
+    if not Optimum:
+        print("     Решение неоптимальное. Подготовка к замене переменных...")
+        # Ищем, какую переменную поставим на замену
+        v1 = ""
+        v2 = ""
+        # избирается максимальное по модулю
+        vm = -1
+        im = 0
+        for i, e in enumerate(svl):
+            if e > vm:
+                vm = e
+                im = i
+        v1 = svr[im]
+        print("        По модулю коэффициента побеждает " + v1 + ". Его и ставим на замену")
+        # Теперь применяем критерий минимизации
+        svr = []
+        svl = []
+        for i, e in enumerate(Fess):
+            if e != []:
+                b = GetK(e, "") # свободный член
+                a = GetK(e, v1) # коэффициент при переводимой переменной
+                if (a != 0) and (b != 0) and ( (a > 0 and b < 0) or (a < 0 and b > 0) ):
+                    svr.append("x"+str(i+1))
+                    svl.append(abs( b / a ))
+                elif (a != 0) and (b != 0) and ( (a > 0 and b > 0) or (a < 0 and b < 0) ):
+                    svr.append("x"+str(i+1))
+                    svl.append(float("inf"))
+                elif (b == 0) and (a < 0):
+                    svr.append("x"+str(i+1))
+                    svl.append(0)
+                elif (b == 0) and (a > 0):
+                    svr.append("x"+str(i+1))
+                    svl.append(float("inf"))
+                elif (a == 0):
+                    svr.append("x"+str(i+1))
+                    svl.append(float("inf"))
+        # избирается минимальное значение
+        vm = float("inf")
+        im = 0
+        for i, e in enumerate(svl):
+            if e < vm:
+                vm = e
+                im = i
+        v2 = svr[im]
+        print("        " + v1 + " = min", end="")
+        print(svl, end="")
+        print(" = "+str(vm))
+        if (vm != float("inf")):
+            print("        пер. =  ", end="")
+            print(svr, end="")
+            print(" = "+str(v2))
+            print()
+            print("     Меняем переменные " + v1 + " и " + v2)
+        else:
+            # Особый случай 2. Мы наткнулись на бесконечность в максимуме
+            print("     [ СТОП ] По критерию минимизации у нас получилась бесконечность. Следовательно, оптимального решения задача не имеет.")
+            if (Ft == "min"):
+                Fctx = float("-inf")
+            elif (Ft == "max"):
+                Fctx = float("inf")
+            PreResp_Value = Fctx
+            PreResp_Basis = []
+            break
+        print("        осн. переменные до   = ", end="")
+        print(Osn)
+        print("        неосн. переменные до = ", end="")
+        print(Neosn)
+        OsnOld = []+Osn
+        NeosnOld = []+Neosn
+        for i, e in enumerate(Osn):
+            if e == v2:
+                Osn[i] = v1
+                break
+            elif e == v1:
+                Osn[i] = v2
+                break
+        for i, e in enumerate(Neosn):
+            if e == v2:
+                Neosn[i] = v1
+                break
+            elif e == v1:
+                Neosn[i] = v2
+                break
+        print("        осн. переменные после   = ", end="")
+        print(Osn)
+        print("        неосн. переменные после = ", end="")
+        print(Neosn)
+    else:
+        # Решение оптимальное
+        PreResp_Value = Fctx
+        PreResp_Basis.append([]+Basis)
+        pvr = []
+        # Проверка на особый случай 1: когда переменная исчезла!
+        # вычленяем все переменные, которые оказались отрицательные
+        for e in Fctr3:
+            if not (e[1] in pvr) and (e[0] == 0) and (e[1] != ""):
+                pvr.append(e[1])
+        if len(pvr) != 0:
+            v1 = pvr[0]
+        if (len(pvr) != 0) and not (IsFoundEnd):
+            IsFoundEnd = True
+            print("     Решение оптимальное, но исчезла переменная "+v1+". Ставим её на замену.")
+        else:
+            # ничего не пропало, можно на этом и закончить
+            break
+            break
+        # Применяем критерий минимизации
+        svr = []
+        svl = []
+        for i, e in enumerate(Fess):
+            if e != []:
+                b = GetK(e, "") # свободный член
+                a = GetK(e, v1) # коэффициент при переводимой переменной
+                if (a != 0) and (b != 0) and ( (a > 0 and b < 0) or (a < 0 and b > 0) ):
+                    svr.append("x"+str(i+1))
+                    svl.append(abs( b / a ))
+                elif (a != 0) and (b != 0) and ( (a > 0 and b > 0) or (a < 0 and b < 0) ):
+                    svr.append("x"+str(i+1))
+                    svl.append(float("inf"))
+                elif (b == 0) and (a < 0):
+                    svr.append("x"+str(i+1))
+                    svl.append(0)
+                elif (b == 0) and (a > 0):
+                    svr.append("x"+str(i+1))
+                    svl.append(float("inf"))
+                elif (a == 0):
+                    svr.append("x"+str(i+1))
+                    svl.append(float("inf"))
+        # избирается минимальное значение
+        vm = float("inf")
+        im = 0
+        for i, e in enumerate(svl):
+            if e < vm:
+                vm = e
+                im = i
+        v2 = svr[im]
+        print("        " + v1 + " = min", end="")
+        print(svl, end="")
+        print(" = "+str(vm))
+        if (vm != float("inf")):
+            print("        пер. =  ", end="")
+            print(svr, end="")
+            print(" = "+str(v2))
+            print()
+            print("     Меняем переменные " + v1 + " и " + v2)
+        print("        осн. переменные до   = ", end="")
+        print(Osn)
+        print("        неосн. переменные до = ", end="")
+        print(Neosn)
+        OsnOld = []+Osn
+        NeosnOld = []+Neosn
+        for i, e in enumerate(Osn):
+            if e == v2:
+                Osn[i] = v1
+                break
+            elif e == v1:
+                Osn[i] = v2
+                break
+        for i, e in enumerate(Neosn):
+            if e == v2:
+                Neosn[i] = v1
+                break
+            elif e == v1:
+                Neosn[i] = v2
+                break
+        print("        осн. переменные после   = ", end="")
+        print(Osn)
+        print("        неосн. переменные после = ", end="")
+        print(Neosn)
+    STEP += 1
+
+# ================================================================================================================================================
+# ==== Вывод итогового решения
+print()
+print()
+print("************ РЕШЕНИЕ ************")
+print("Значение целевой функции: "+str(PreResp_Value))
+print("Базисные решения:")
+for e in PreResp_Basis:
+    print("    ", e)
