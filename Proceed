@@ -34,7 +34,7 @@ def ParseExp(exp):
             else:
                 tmp2 = ''
             continue
-        elif c in "1234567890":
+        elif c in "1234567890.,":
             if mode == 'k':
                 tmp2 += c
             elif mode == 'v':
