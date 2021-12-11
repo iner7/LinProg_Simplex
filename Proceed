@@ -1,7 +1,49 @@
 #!/usr/bin/env python3
 
-DEF_FMT = "%.4f"
+DEF_FMT = "%.9f"
 
+def FloatToFraction(n):
+    import fractions
+    # used from https://fooobar.com/questions/2379201/python-find-repeated-substring-in-string/6210495#6210495
+    def repeats(string):
+        for x in range(1, len(string)):
+            substring = string[:x]
+            if substring * (len(string)//len(substring))+(substring[:len(string)%len(substring)]) == string:
+                return substring
+        return None
+    s = str("%.14f"%n)
+    ss = s.split('.')[1]
+    ss = ss[:-1]
+    nd = "" # nd - после запятой, но до периода
+    rr = repeats(ss) # rr - период
+    while (rr == None):
+        nd += ss[0]
+        ss = ss[1:]
+        rr = repeats(ss)
+    # used from https://your-online.ru/math-calculators/periodic-ordinary-fraction
+    P = len(rr)
+    DP = len(nd)
+    if (nd == ""): nd = "0"
+    ALL = int(nd+rr)
+    ALL_DP = int(nd)
+    CHISL = ALL - ALL_DP
+    ZNAM  = int("9"*P + "0"*DP)
+    a = fractions.Fraction(CHISL, ZNAM)
+    a = a.limit_denominator()
+    CHISL = a.numerator
+    ZNAM  = a.denominator
+    return CHISL, ZNAM
+def PrintNumber(n):
+    zn = ""
+    if (n < 0): zn = "-"
+    
+    F = int(abs(n) * 10) // 10 # целая часть
+    c, z = FloatToFraction(abs(n))
+    
+    if (F == 0) and (c == 0): return zn + "0"
+    elif (F == 0) and (c != 0): return zn + '{'+str(c)+'/'+str(z)+'}'
+    elif (F != 0) and (c == 0): return zn + str(F)
+    else: return zn +  '{'+str(F)+' '+str(c)+'/'+str(z)+'}'
 def ParseExp(exp):
     exp = exp.replace(" ", "")
     ex = []
@@ -34,7 +76,7 @@ def ParseExp(exp):
             else:
                 tmp2 = ''
             continue
-        elif c in "1234567890.,":
+        elif c in "1234567890":
             if mode == 'k':
                 tmp2 += c
             elif mode == 'v':
@@ -72,9 +114,9 @@ def PrintExp(exp, printNull=False):
             elif e[0] == -1.0: tmp += "-"
             else:
                 if e[0] >= 0 and tmp != "":
-                    tmp += "+"+DEF_FMT%(e[0])
+                    tmp += "+"+PrintNumber(e[0])
                 else:
-                    tmp += DEF_FMT%(e[0])
+                    tmp += PrintNumber(e[0])
             if type(e[1]) is list:
                 tmp += "("+PrintExp(e[1], printNull)+")"
             else:
@@ -139,6 +181,17 @@ def GetDiffVar(l1, l2):
         if (e1 != l2[i]):
             return l2[i]
     return None
+def PrintNumberArray(a):
+    S = "["
+    for i in a:
+        if (type(i) is list): S += PrintNumberArray(i)
+        else:
+            if i == float("inf"): S += " ∞ ; "
+            elif i == float("-inf"): S += " -∞ ; "
+            else: S += " " + PrintNumber(i) + " ; "
+    S += "]"
+    return S.replace("; ]", "]")
+        
 # ================================================================================================================================================
 # ================================================================================================================================================
 
@@ -198,9 +251,6 @@ for i, e in enumerate(Exps):
 for e in Exps:
     print(PrintUr(e))
 
-print()
-print("     Основные переменные:  ", Osn)
-print("     Неосновные переменные:", Neosn)
 
 # ================================================================================================================================================
 # ==== Решение по шагам
@@ -261,7 +311,7 @@ while True:
         Basis[index-1] = value
     # Выводим базисное решение
     print()
-    print("     X"+str(STEP) + ' =', Basis)
+    print("     X"+str(STEP) + ' =', PrintNumberArray(Basis))
     ndbr_vr = []
     ndbr_vl = []
     # Проверяем на допустимость. Все компоненты должны быть положительные
@@ -310,11 +360,6 @@ while True:
         # если и на этот раз ничего не нашли: придётся выбрать первую из них (а так можно любую)
         if v2 == "":
             v2 = pvr[0]
-        print("     Меняем переменные " + v1 + " и " + v2)
-        print("        осн. переменные до   = ", end="")
-        print(Osn)
-        print("        неосн. переменные до = ", end="")
-        print(Neosn)
         OsnOld = []+Osn
         NeosnOld = []+Neosn
         for i, e in enumerate(Osn):
@@ -331,10 +376,6 @@ while True:
             elif e == v1:
                 Neosn[i] = v2
                 break
-        print("        осн. переменные после   = ", end="")
-        print(Osn)
-        print("        неосн. переменные после = ", end="")
-        print(Neosn)
         STEP += 1
         continue
         #break
@@ -355,7 +396,7 @@ while True:
     print("     F(X"+str(STEP)+") = ", end="")
     for i, e in enumerate(Neosn):
         Fctr = SubsFx(Fctr, "x"+str(i+1), Basis[i])
-    print(Fctr, end="")
+    print(PrintNumberArray(Fctr), end="")
     Fctx = CalculateExp(Fctr)
     print(" = "+str(Fctx))
     PreResp_Value = Fctx
@@ -396,7 +437,7 @@ while True:
             kvl.append(e[0])
             kac.append(True)
     for i, k in enumerate(kac):
-        print("     коэффициент при " + kvr[i] + " = " + str(kvl[i]), end="")
+        print("     коэффициент при " + kvr[i] + " = " + PrintNumber(kvl[i]), end="")
         if Ft == "max":
             if kvl[i] > 0: # не [меньше нуля]
                 kac[i] = False
@@ -459,7 +500,7 @@ while True:
                 im = i
         v2 = svr[im]
         print("        " + v1 + " = min", end="")
-        print(svl, end="")
+        print(PrintNumberArray(svl), end="")
         print(" = "+str(vm))
         if (vm != float("inf")):
             print("        пер. =  ", end="")
@@ -477,10 +518,6 @@ while True:
             PreResp_Value = Fctx
             PreResp_Basis = []
             break
-        print("        осн. переменные до   = ", end="")
-        print(Osn)
-        print("        неосн. переменные до = ", end="")
-        print(Neosn)
         OsnOld = []+Osn
         NeosnOld = []+Neosn
         for i, e in enumerate(Osn):
@@ -497,10 +534,6 @@ while True:
             elif e == v1:
                 Neosn[i] = v2
                 break
-        print("        осн. переменные после   = ", end="")
-        print(Osn)
-        print("        неосн. переменные после = ", end="")
-        print(Neosn)
     else:
         # Решение оптимальное
         PreResp_Value = Fctx
@@ -559,10 +592,6 @@ while True:
             print(" = "+str(v2))
             print()
             print("     Меняем переменные " + v1 + " и " + v2)
-        print("        осн. переменные до   = ", end="")
-        print(Osn)
-        print("        неосн. переменные до = ", end="")
-        print(Neosn)
         OsnOld = []+Osn
         NeosnOld = []+Neosn
         for i, e in enumerate(Osn):
@@ -579,10 +608,6 @@ while True:
             elif e == v1:
                 Neosn[i] = v2
                 break
-        print("        осн. переменные после   = ", end="")
-        print(Osn)
-        print("        неосн. переменные после = ", end="")
-        print(Neosn)
     STEP += 1
 
 # ================================================================================================================================================
@@ -593,4 +618,4 @@ print("************ РЕШЕНИЕ ************")
 print("Значение целевой функции: "+str(PreResp_Value))
 print("Базисные решения:")
 for e in PreResp_Basis:
-    print("    ", e)
+    print("    ", PrintNumberArray(e))
